@@ -1,0 +1,46 @@
+
+name: Update Taiwan Stock Screen
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10 * * 1-5'
+      timezone: Asia/Taipei
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Update stock data
+        working-directory: ./tw-stock-pulse
+        run: python build.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tw-stock-pulse/data/ tw-stock-pulse/site/data.json
+          git diff --cached --quiet || (git commit -m "Update market data" && git push)
+
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./tw-stock-pulse/site
+
+      - name: Deploy GitHub Pages
+        uses: actions/deploy-pages@v4
