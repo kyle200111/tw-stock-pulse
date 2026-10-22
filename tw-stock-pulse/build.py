@@ -1,224 +1,377 @@
-"""Taiwan Swing Pulse — official-source EOD screener. Python stdlib only.
-
-Data limitations: listed equities only in V1; max top liquid universe; institutional and earnings
-not historical in this implementation. Missing pillars are not silently awarded points.
+"""Taiwan Pulse v1.3: verified rolling EPS, 100-point score, date integrity.
+Stdlib only. Sources: TWSE public endpoints; FinMind historical EPS (if API accessible).
+Missing components NEVER silently receive full score.
 """
-import json, os, time, math, statistics, datetime, urllib.request, urllib.parse, random
+import datetime as dt
+import json
+import math
+import os
+import statistics
+import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
-ROOT=Path(__file__).resolve().parent
-DATA=ROOT/'data'; DATA.mkdir(exist_ok=True)
-TZ=datetime.timezone(datetime.timedelta(hours=8))
-NOW=datetime.datetime.now(TZ)
-UA={'User-Agent':'Mozilla/5.0 (compatible; TaiwanSwingPulse/1.0; educational research)','Accept':'application/json'}
 
-def read_json(path, fallback):
-    try:return json.loads(Path(path).read_text(encoding='utf-8'))
-    except Exception:return fallback
+ROOT = Path(__file__).resolve().parent
+DATA = ROOT / 'data'
+SITE = ROOT / 'site'
+DATA.mkdir(exist_ok=True)
+SITE.mkdir(exist_ok=True)
+TZ = dt.timezone(dt.timedelta(hours=8))
+NOW = dt.datetime.now(TZ)
+USER_AGENT = {'User-Agent': 'Mozilla/5.0 (TaiwanPulse research screener)', 'Accept': 'application/json'}
 
-def fetch(url, retries=3):
-    for n in range(retries):
-        try:
-            req=urllib.request.Request(url,headers=UA)
-            with urllib.request.urlopen(req,timeout=28) as r:return json.load(r)
-        except Exception as exc:
-            print('fetch failed',n+1,url,str(exc)[:110]); time.sleep(1.6*(n+1))
-    return None
 
-def number(v):
-    if isinstance(v,(int,float)):return float(v) if math.isfinite(v) else None
+def read(path, default=None):
     try:
-        v=str(v).replace(',','').strip().replace('＋','+').replace('−','-')
-        if not v or v in ('--','-','---','N/A','X'):return None
-        return float(v)
-    except Exception:return None
+        return json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return default
 
-def roc_date(s):
-    s=str(s).strip()
-    if '/' in s:
-        pieces=s.split('/')
-        try:return f'{int(pieces[0])+(1911 if int(pieces[0])<1900 else 0):04}-{int(pieces[1]):02}-{int(pieces[2]):02}'
-        except Exception:return None
-    if s.isdigit() and len(s)>=7:
-        return f'{int(s[:-4])+1911:04}-{s[-4:-2]}-{s[-2:]}'
+
+def save(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def fetch(url, retries=2, headers=None):
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={**USER_AGENT, **(headers or {})}), timeout=25) as res:
+                return json.load(res)
+        except Exception as exc:
+            print('API error', attempt + 1, url.split('?')[0], str(exc)[:100], flush=True)
+            if attempt + 1 < retries:
+                time.sleep(1.5 * (attempt + 1))
     return None
 
-def load_latest():
-    raw=fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL')
-    if not isinstance(raw,list):return []
-    out=[]
-    for r in raw:
-        code=str(r.get('Code',''))
-        if len(code)!=4 or not code.isdigit():continue
-        close=number(r.get('ClosingPrice')); value=number(r.get('TradeValue'))
-        if close is None or close<=0 or value is None:continue
-        out.append({'ticker':code,'name':r.get('Name',''), 'close':close,'volume':number(r.get('TradeVolume')),'value':value,'date':roc_date(r.get('Date')),'market':'TWSE'})
+
+def num(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        val = float(str(value).replace(',', '').replace('−', '-').strip())
+        return val if math.isfinite(val) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def roc_date(text):
+    text = str(text or '').strip()
+    try:
+        if '/' in text:
+            y, m, d = map(int, text.split('/'))
+            return dt.date(y + (1911 if y < 1900 else 0), m, d).isoformat()
+        if '-' in text:
+            return dt.date.fromisoformat(text[:10]).isoformat()
+        if text.isdigit() and len(text) in (7, 8):
+            y = int(text[:-4]); m = int(text[-4:-2]); d = int(text[-2:])
+            return dt.date(y + (1911 if y < 1900 else 0), m, d).isoformat()
+    except ValueError:
+        pass
+    return None
+
+
+def latest_quotes():
+    raw = fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL')
+    stocks = []
+    if not isinstance(raw, list):
+        return stocks
+    for row in raw:
+        ticker = str(row.get('Code', '')).strip()
+        price, value = num(row.get('ClosingPrice')), num(row.get('TradeValue'))
+        if not (len(ticker) == 4 and ticker.isdigit() and price and price > 0 and value and value > 0):
+            continue
+        stocks.append({'ticker': ticker, 'name': row.get('Name', ''), 'value': value,
+                       'price': price, 'date': roc_date(row.get('Date'))})
+    return stocks
+
+
+def revenue_data():
+    raw = fetch('https://openapi.twse.com.tw/v1/opendata/t187ap05_L')
+    out = {}
+    for row in raw if isinstance(raw, list) else []:
+        code = str(row.get('公司代號') or row.get('公司代碼') or '').strip()
+        yoy = next((num(row.get(k)) for k in ['營業收入-去年同月增減(%)', '營業收入-去年同月增減％', '去年同月增減(%)'] if num(row.get(k)) is not None), None)
+        if len(code) == 4:
+            out[code] = {'yoy': yoy, 'period': str(row.get('資料年月', ''))}
     return out
 
-def revenue_lookup():
-    raw=fetch('https://openapi.twse.com.tw/v1/opendata/t187ap05_L')
-    if not isinstance(raw,list):return {}
-    out={}
-    for r in raw:
-        code=str(r.get('公司代號') or r.get('公司代碼') or '').strip()
-        if len(code)!=4:continue
-        yoy=number(r.get('營業收入-去年同月增減(%)') or r.get('營業收入-去年同月增減％') or r.get('去年同月增減(%)'))
-        # Source keys may differ between versions; missing is unavailable, never presumed positive.
-        out[code]={'yoy':yoy,'period':str(r.get('資料年月','')),'source':'TWSE t187ap05_L'}
+
+def valuations():
+    raw = fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL')
+    out = {}
+    for row in raw if isinstance(raw, list) else []:
+        code = str(row.get('Code') or row.get('證券代號') or '').strip()
+        if len(code) == 4:
+            out[code] = {'pe': num(row.get('PEratio') or row.get('本益比'))}
     return out
 
-def valuation_lookup():
-    raw=fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL')
-    if not isinstance(raw,list):return {}
-    out={}
-    for r in raw:
-        code=str(r.get('Code') or r.get('證券代號') or '')
-        if len(code)!=4:continue
-        out[code]={'pe':number(r.get('PEratio') or r.get('本益比')),'pb':number(r.get('PBratio') or r.get('股價淨值比'))}
-    return out
 
-def institutional_5day():
-    """Fetch the five most recent available TWSE T86 sessions, indexed by ticker.
-
-    The official source returns shares, not lots. Do not assign scores if fewer
-    than five sessions are available; holidays are handled by scanning weekdays.
-    """
-    session=[]
-    cache=DATA/'institutions';cache.mkdir(exist_ok=True)
-    for back in range(17):
-        day=(NOW-datetime.timedelta(days=back)).date()
-        if day.weekday()>4:continue
-        key=day.strftime('%Y%m%d');path=cache/f'{key}.json'
-        raw=read_json(path,None)
+def institutions():
+    sessions = []
+    for days_back in range(17):
+        day = NOW.date() - dt.timedelta(days=days_back)
+        if day.weekday() >= 5:
+            continue
+        key = day.strftime('%Y%m%d')
+        path = DATA / 'institutions' / f'{key}.json'
+        raw = read(path)
         if raw is None:
-            url='https://www.twse.com.tw/rwd/zh/fund/T86?'+urllib.parse.urlencode({'date':key,'selectType':'ALLBUT0999','response':'json'})
-            raw=fetch(url,2)
-            if isinstance(raw,dict) and raw.get('stat')=='OK' and raw.get('data'):
-                path.write_text(json.dumps(raw,ensure_ascii=False),encoding='utf-8')
-        if not isinstance(raw,dict) or raw.get('stat')!='OK':continue
-        fields=raw.get('fields',[])
-        def idx(key):
-            for i,f in enumerate(fields):
-                if key in str(f):return i
-            return None
-        code_i=idx('證券代號'); f_i=idx('外陸資買賣超股數(不含外資自營商)'); t_i=idx('投信買賣超股數')
-        if None in (code_i,f_i,t_i):continue
-        rows={}
-        for row in raw.get('data',[]):
-            try:
-                code=str(row[code_i]).strip();foreign=number(row[f_i]);trust=number(row[t_i])
-                if len(code)==4 and code.isdigit() and foreign is not None and trust is not None:rows[code]={'foreign':foreign,'trust':trust}
-            except (IndexError,TypeError):continue
-        if rows:session.append((day.isoformat(),rows))
-        if len(session)>=5:break
-    if len(session)<5:return {},len(session)
-    codes=set.intersection(*(set(rows) for _,rows in session))
-    out={code:{'foreign5':sum(rows[code]['foreign'] for _,rows in session),'trust5':sum(rows[code]['trust'] for _,rows in session),'through':session[0][0]} for code in codes}
-    return out,5
+            url = 'https://www.twse.com.tw/rwd/zh/fund/T86?' + urllib.parse.urlencode({'date': key, 'selectType': 'ALLBUT0999', 'response': 'json'})
+            raw = fetch(url, retries=1)
+            if isinstance(raw, dict) and raw.get('stat') == 'OK' and raw.get('data'):
+                save(path, raw)
+        if not isinstance(raw, dict) or raw.get('stat') != 'OK':
+            continue
+        fields = [str(f) for f in raw.get('fields', [])]
+        def index(fragment):
+            return next((i for i, name in enumerate(fields) if fragment in name), None)
+        ci, fi, ti = index('證券代號'), index('外陸資買賣超股數(不含外資自營商)'), index('投信買賣超股數')
+        if None in (ci, fi, ti):
+            continue
+        rows = {}
+        for r in raw.get('data', []):
+            if len(r) <= max(ci, fi, ti):
+                continue
+            code, foreign, trust = str(r[ci]).strip(), num(r[fi]), num(r[ti])
+            if len(code) == 4 and code.isdigit() and foreign is not None and trust is not None:
+                rows[code] = (foreign, trust)
+        if rows:
+            sessions.append((day.isoformat(), rows))
+        if len(sessions) == 5:
+            break
+    if len(sessions) < 5:
+        return {}, len(sessions)
+    shared = set.intersection(*(set(rows) for _, rows in sessions))
+    return {code: {'foreign5': sum(s[code][0] for _, s in sessions),
+                   'trust5': sum(s[code][1] for _, s in sessions), 'through': sessions[0][0]} for code in shared}, 5
 
-def eps_snapshot():
-    """Published latest cumulative EPS, not trailing 4-quarter EPS. Avoid look-ahead."""
-    endpoints=['t187ap06_L_ci','t187ap06_L_fh','t187ap06_L_ins','t187ap06_L_basi','t187ap06_L_bd','t187ap06_L_mim']
-    out={}
-    for ep in endpoints:
-        raw=fetch('https://openapi.twse.com.tw/v1/opendata/'+ep,2)
-        if not isinstance(raw,list):continue
-        for r in raw:
-            code=str(r.get('公司代號') or r.get('公司代碼') or '').strip()
-            if len(code)!=4 or not code.isdigit():continue
-            eps=None
-            for k,v in r.items():
-                if '每股盈餘' in k or '每股稅後盈餘' in k:
-                    n=number(v)
-                    if n is not None:eps=n
-            if eps is None:continue
-            out[code]={'value':eps,'period':str(r.get('年度') or r.get('資料年度') or '')+'/'+str(r.get('季別') or r.get('資料季別') or ''),'source':ep,'basis':'最新已揭露累計EPS；非近四季TTM'}
-    return out
 
-def load_history(ticker, months=6):
-    cache_file=DATA/'history'/f'{ticker}.json';cache_file.parent.mkdir(exist_ok=True)
-    old=read_json(cache_file,{})
-    dates=[]; year=NOW.year;month=NOW.month
-    for k in range(months):
-        y=year+(month-1-k)//12; m=(month-1-k)%12+1
-        dates.append(f'{y}{m:02}01')
-    for ym in reversed(dates):
-        if ym in old:continue
-        u='https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?'+urllib.parse.urlencode({'date':ym,'stockNo':ticker,'response':'json'})
-        raw=fetch(u,2)
-        rows=[]
-        if isinstance(raw,dict) and raw.get('stat')=='OK':
-            for values in raw.get('data',[]):
-                if len(values)<7:continue
-                date=roc_date(values[0]); close=number(values[6]); high=number(values[4]); low=number(values[5]);volume=number(values[1]); turnover=number(values[2]);
-                if date and all(q is not None for q in (close,high,low,volume,turnover)):
-                    rows.append({'date':date,'close':close,'high':high,'low':low,'volume':volume,'value':turnover})
-        if rows:old[ym]=rows
-        time.sleep(0.20)
-    cache_file.write_text(json.dumps(old,ensure_ascii=False),encoding='utf-8')
-    combined={r['date']:r for group in old.values() for r in group}
-    return sorted(combined.values(),key=lambda r:r['date'])
+def history(ticker, months=7):
+    path = DATA / 'history' / f'{ticker}.json'
+    previous = read(path, {}) or {}
+    dates = []
+    for back in range(months):
+        n = (NOW.year * 12 + NOW.month - 1) - back
+        y, m = divmod(n, 12)
+        dates.append(f'{y}{m + 1:02}01')
+    # Recheck current calendar month on every run, since it grows trading-day by trading-day.
+    current = f'{NOW.year}{NOW.month:02}01'
+    for yearmonth in reversed(dates):
+        if yearmonth in previous and yearmonth != current:
+            continue
+        url = 'https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?' + urllib.parse.urlencode({'date': yearmonth, 'stockNo': ticker, 'response': 'json'})
+        raw = fetch(url, retries=2)
+        if isinstance(raw, dict) and raw.get('stat') == 'OK':
+            parsed = []
+            for r in raw.get('data', []):
+                if len(r) < 7:
+                    continue
+                d, close, high, low, volume, value = roc_date(r[0]), num(r[6]), num(r[4]), num(r[5]), num(r[1]), num(r[2])
+                if d and all(x is not None for x in (close, high, low, volume, value)):
+                    parsed.append({'date': d, 'close': close, 'high': high, 'low': low, 'volume': volume, 'value': value})
+            if parsed:
+                previous[yearmonth] = parsed
+        time.sleep(0.12)
+    save(path, previous)
+    merged = {r['date']: r for rows in previous.values() for r in rows}
+    return sorted(merged.values(), key=lambda x: x['date'])
 
-def mean(seq):return sum(seq)/len(seq) if seq else None
 
-def calc(s, hist, rev, val, inst=None, eps=None):
-    if len(hist)<65:return None
-    closes=[r['close'] for r in hist]; highs=[r['high'] for r in hist]; lows=[r['low'] for r in hist]; vals=[r['value'] for r in hist]; vols=[r['volume'] for r in hist]
-    price=closes[-1];ma20=mean(closes[-20:]);ma60=mean(closes[-60:]); avgv=mean(vals[-20:]); avgvol=mean(vols[-20:])
-    if price<20 or avgv<50_000_000 or not(price>ma20>ma60):return None
-    # Revenue strictly validated whenever present; data gap still shown explicitly.
-    yoy=rev.get('yoy') if rev else None
-    if yoy is not None and yoy<0:return None
-    pe=val.get('pe') if val else None
-    tr=[max(highs[i]-lows[i],abs(highs[i]-closes[i-1]),abs(lows[i]-closes[i-1])) for i in range(len(hist)-14,len(hist))]
-    atr=mean(tr)
-    if atr is None or atr<=0:return None
-    r20=price/closes[-21]-1;r60=price/closes[-61]-1
-    vol_ratio=vols[-1]/avgvol if avgvol else 0
-    hi20=max(highs[-21:-1]); entry='突破' if price>hi20 and vol_ratio>=1.5 else '回檔/觀察'
-    # Only measured sub-scores counted; missing EPS and institutional trends remain explicitly unscored.
-    fundamental=(12 if yoy is not None and yoy>=20 else (7 if yoy is not None and yoy>=0 else 0)) if yoy is not None else None # revenue subcomponent max 12; EPS subcomponent max 8 unavailable
-    momentum=(10 if ma20>ma60 else 0)+(10 if r20>=0.07 else (6 if r20>0 else 0))+(10 if r60>=0.12 else (5 if r60>0 else 0))
-    volume=(8 if avgv>=200_000_000 else 5)+(7 if vol_ratio>=1.5 else (4 if vol_ratio>=1 else 0))
-    institution=None
-    if inst and avgvol and avgvol>0:
-        ratio=(inst['foreign5']+inst['trust5'])/(5*avgvol)
-        institution=(8 if ratio>=0.10 else 5 if ratio>0 else 0)+(7 if inst['trust5']>0 else 0)
-    valuation=(8 if pe is not None and 0<pe<=25 else (5 if pe is not None and pe<=40 else (1 if pe is not None and pe>0 else 0))) if pe is not None else None
-    risk=10 if atr/price<0.035 else 6 if atr/price<0.06 else 3
-    known=[momentum,volume,risk]; cap=30+15+10
-    if fundamental is not None:known.append(fundamental);cap+=12
-    if institution is not None:known.append(institution);cap+=15
-    if valuation is not None:known.append(valuation);cap+=10
-    # Full score intentionally withheld while institutional and earnings completeness not met.
-    observed=sum(known);score=round(observed/cap*100,1)
-    stop=round(max(0.01,price-2*atr),2)
-    target=round(price+3*atr,2)
-    weeks='2–4週' if r20>=.15 else '4–8週' if r20>=.05 else '6–12週'
-    return {'ticker':s['ticker'],'name':s['name'],'market':'TWSE','date':hist[-1]['date'], 'price':round(price,2),'score':None,'observedScore':score,'scoreCoverage':cap,'scoreMaximum':100,'status':'研究候選｜分數不完整', 'holding':weeks,'target':target,'stop':stop,'entryType':entry,'upside':round((target/price-1)*100,1),'downside':round((stop/price-1)*100,1),'ma20':round(ma20,2),'ma60':round(ma60,2),'atr14':round(atr,2),'ret20':round(r20*100,1),'ret60':round(r60*100,1),'volumeRatio':round(vol_ratio,2),'avgValue20':round(avgv),'revenueYoy':yoy,'revenuePeriod':rev.get('period') if rev else None,'foreign5Shares':inst.get('foreign5') if inst else None,'trust5Shares':inst.get('trust5') if inst else None,'institutionalThrough':inst.get('through') if inst else None,'pe':pe,'epsCumulative':eps.get('value') if eps else None,'epsPeriod':eps.get('period') if eps else None,'epsBasis':eps.get('basis') if eps else None,'missing':['近4季EPS未串接']+([] if institution is not None else ['法人最近五交易日資料缺失'])+(['估值資料缺失'] if valuation is None else [])+(['月營收年增缺失'] if yoy is None else []),'scoreParts':{'fundamental':fundamental,'momentum':momentum,'volume':volume,'institutional':institution,'valuation':valuation,'risk':risk},'rationale':['價位高於MA20、MA60且MA20>MA60',f'近20日報酬 {r20*100:.1f}%',f'ATR(14) {atr:.2f}'],'sourceUrls':['https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY','https://openapi.twse.com.tw/v1/opendata/t187ap05_L']}
+def validated_eps_ttm(rows, as_of_date):
+    """FinMind EPS is *single-quarter*; require four consecutive quarters and known publication cutoff.
+    Public endpoint does not supply point-in-time report dates: a conservative generic disclosure
+    delay is applied, and historical backtesting must not use this approximation as PIT truth.
+    Corporate-action retrospective EPS adjustment cannot be verified automatically here.
+    """
+    quarters = {}
+    for row in rows:
+        if row.get('type') != 'EPS':
+            continue
+        date = str(row.get('date') or '')[:10]
+        try:
+            qdate = dt.date.fromisoformat(date)
+            if qdate.month not in (3, 6, 9, 12) or (qdate.month, qdate.day) not in ((3, 31), (6, 30), (9, 30), (12, 31)):
+                continue
+            # Conservative eligibility; exact company publication timestamp unknown.
+            embargo = 75 if qdate.month == 12 else 60
+            if qdate + dt.timedelta(days=embargo) > as_of_date:
+                continue
+            value = num(row.get('value'))
+            if value is not None:
+                quarters[(qdate.year, (qdate.month - 1) // 3 + 1)] = (value, date)
+        except ValueError:
+            continue
+    if not quarters:
+        return None
+    keys = sorted(quarters)[-4:]
+    if len(keys) != 4:
+        return None
+    ordinal = [year * 4 + q for year, q in keys]
+    if any(b - a != 1 for a, b in zip(ordinal, ordinal[1:])):
+        return None
+    return {'value': round(sum(quarters[k][0] for k in keys), 3), 'quarters': [quarters[k][1] for k in keys],
+            'source': 'FinMind/TaiwanStockFinancialStatements', 'basis': '原始單季EPS四季加總（未校正配股與分割）',
+            'corporateActionVerified': False}
+
+
+def verify_eps_corporate_actions(ticker, eps):
+    """Conservatively validate against known stock dividends and split events.
+    An empty successful dataset is valid; failed API requests cannot certify.
+    Note: full IAS 33 retroactive reconciliation remains an external audit task.
+    """
+    if not eps:
+        return None
+    start = eps['quarters'][0]
+    token = os.environ.get('FINMIND_TOKEN', '').strip()
+    headers = {'Authorization': f'Bearer {token}'} if token else {}
+    datasets = ('TaiwanStockDividend', 'TaiwanStockSplitPrice')
+    results = []
+    for dataset in datasets:
+        url = 'https://api.finmindtrade.com/api/v4/data?' + urllib.parse.urlencode({
+            'dataset': dataset, 'data_id': ticker, 'start_date': start})
+        raw = fetch(url, retries=1, headers=headers)
+        if not isinstance(raw, dict) or not isinstance(raw.get('data'), list):
+            return eps
+        results.append(raw['data'])
+    # These flags are approximate and cannot guarantee all IFRS retroactive share adjustments.
+    stock_dividends = any((num(row.get('StockEarningsDistribution')) or 0) != 0 for row in results[0])
+    split_events = bool(results[1])
+    eps['corporateActionChecked'] = True
+    eps['corporateActionRisk'] = stock_dividends or split_events
+    # Do not promote to audited score based solely on public event absence.
+    return eps
+
+
+def eps_history(ticker, as_of_date):
+    path = DATA / 'earnings' / f'{ticker}.json'
+    cached = read(path, {}) or {}
+    # Cache one day to protect provider quota; no data falsely promoted to complete TTM.
+    if cached.get('fetchedDate') == NOW.date().isoformat():
+        return verify_eps_corporate_actions(ticker, validated_eps_ttm(cached.get('rows', []), as_of_date))
+    since = (as_of_date - dt.timedelta(days=730)).isoformat()
+    url = 'https://api.finmindtrade.com/api/v4/data?' + urllib.parse.urlencode({
+        'dataset': 'TaiwanStockFinancialStatements', 'data_id': ticker, 'start_date': since})
+    token = os.environ.get('FINMIND_TOKEN', '').strip()
+    headers = {'Authorization': f'Bearer {token}'} if token else {}
+    raw = fetch(url, retries=1, headers=headers)
+    if isinstance(raw, dict) and isinstance(raw.get('data'), list):
+        filtered = [r for r in raw['data'] if r.get('type') == 'EPS']
+        if filtered:
+            save(path, {'fetchedDate': NOW.date().isoformat(), 'rows': filtered})
+            return verify_eps_corporate_actions(ticker, validated_eps_ttm(filtered, as_of_date))
+    return verify_eps_corporate_actions(ticker, validated_eps_ttm(cached.get('rows', []), as_of_date))
+
+
+def score_stock(s, bars, rev, valuation, institution, eps):
+    if len(bars) < 65 or not s.get('date') or bars[-1]['date'] != s['date']:
+        return None, '行情日期與價格歷史不一致'
+    c = [r['close'] for r in bars]
+    high, low = [r['high'] for r in bars], [r['low'] for r in bars]
+    volume, values = [r['volume'] for r in bars], [r['value'] for r in bars]
+    price, ma20, ma60 = c[-1], statistics.mean(c[-20:]), statistics.mean(c[-60:])
+    avg_volume, avg_value = statistics.mean(volume[-20:]), statistics.mean(values[-20:])
+    yoy = rev.get('yoy') if rev else None
+    if price < 20 or avg_value < 50_000_000 or not (price > ma20 > ma60) or (yoy is not None and yoy < 0):
+        return None, None
+    tr = [max(high[i] - low[i], abs(high[i] - c[i - 1]), abs(low[i] - c[i - 1])) for i in range(len(bars) - 14, len(bars))]
+    atr = statistics.mean(tr)
+    if atr <= 0:
+        return None, None
+    ret20, ret60 = price / c[-21] - 1, price / c[-61] - 1
+    volratio = volume[-1] / avg_volume if avg_volume else 0
+    pe = valuation.get('pe') if valuation else None
+    parts = {}
+    # Fundamental out of 20: revenue 12, EPS 8. No EPS points until quarter history is present.
+    revenue_pts = 12 if yoy is not None and yoy >= 20 else 7 if yoy is not None and yoy >= 0 else 0
+    eps_pts = 8 if eps and eps['value'] > 0 else 0
+    parts['fundamental'] = revenue_pts + eps_pts if yoy is not None and eps else None
+    parts['momentum'] = (10 if ma20 > ma60 else 0) + (10 if ret20 >= .07 else 6 if ret20 > 0 else 0) + (10 if ret60 >= .12 else 5 if ret60 > 0 else 0)
+    parts['volume'] = (8 if avg_value >= 200_000_000 else 5) + (7 if volratio >= 1.5 else 4 if volratio >= 1 else 0)
+    if institution and avg_volume:
+        ratio = (institution['foreign5'] + institution['trust5']) / (5 * avg_volume)
+        parts['institutional'] = (8 if ratio >= .10 else 5 if ratio > 0 else 0) + (7 if institution['trust5'] > 0 else 0)
+    else:
+        parts['institutional'] = None
+    parts['valuation'] = (8 if 0 < pe <= 25 else 5 if 0 < pe <= 40 else 1 if pe and pe > 0 else 0) if pe is not None else None
+    parts['risk'] = 10 if atr / price < .035 else 6 if atr / price < .06 else 3
+    caps = {'fundamental': 20, 'momentum': 30, 'volume': 15, 'institutional': 15, 'valuation': 10, 'risk': 10}
+    coverage = sum(caps[key] for key, value in parts.items() if value is not None)
+    observed = sum(v for v in parts.values() if v is not None)
+    # Need independently verified corporate action to label EPS as fully audited 100-point score.
+    eps_verified = bool(eps and eps.get('corporateActionVerified'))
+    fully_scored = coverage == 100 and eps_verified
+    score = observed if fully_scored else None
+    missing = []
+    if not eps:
+        missing.append('近四季EPS歷史資料不足')
+    elif not eps_verified:
+        missing.append('EPS配股/分割追溯調整尚未驗證')
+    if yoy is None:
+        missing.append('月營收年增資料缺失')
+    if parts['institutional'] is None:
+        missing.append('近5日法人籌碼缺失')
+    if pe is None:
+        missing.append('估值資料缺失')
+    target, stop = round(price + 3 * atr, 2), round(max(.01, price - 2 * atr), 2)
+    return {'ticker': s['ticker'], 'name': s['name'], 'market': 'TWSE', 'date': s['date'],
+            'price': round(price, 2), 'score': score, 'observedScore': round(observed / coverage * 100, 1) if coverage else None,
+            'scoreCoverage': coverage, 'scoreMaximum': 100,
+            'status': '已完整評分' if fully_scored else '研究候選｜分數不完整',
+            'holding': '2–4週' if ret20 >= .15 else '4–8週' if ret20 >= .05 else '6–12週',
+            'target': target, 'stop': stop, 'upside': round((target / price - 1) * 100, 1),
+            'downside': round((stop / price - 1) * 100, 1), 'ma20': round(ma20, 2), 'ma60': round(ma60, 2),
+            'atr14': round(atr, 2), 'ret20': round(ret20 * 100, 1), 'ret60': round(ret60 * 100, 1),
+            'volumeRatio': round(volratio, 2), 'avgValue20': round(avg_value), 'revenueYoy': yoy,
+            'revenuePeriod': rev.get('period') if rev else None, 'foreign5Shares': institution.get('foreign5') if institution else None,
+            'trust5Shares': institution.get('trust5') if institution else None,
+            'institutionalThrough': institution.get('through') if institution else None,
+            'pe': pe, 'epsTtm': eps.get('value') if eps else None,
+            'epsQuarters': eps.get('quarters') if eps else None,
+            'epsBasis': eps.get('basis') if eps else None, 'epsCorporateActionVerified': eps_verified,
+            'missing': missing, 'scoreParts': parts,
+            'rationale': ['價位高於MA20、MA60且MA20>MA60', f'近20日報酬 {ret20 * 100:.1f}%', f'ATR(14) {atr:.2f}']}, None
+
 
 def main():
-    latest=load_latest()
-    previous=read_json(DATA/'latest.json',{})
-    if not latest:
-        print('No official latest quote; retain prior publication with warning');
-        previous['warning']='本次官方行情 API 讀取失敗；沿用歷史資料。';previous['attemptAt']=NOW.isoformat()
-        (DATA/'latest.json').write_text(json.dumps(previous,ensure_ascii=False,indent=2),encoding='utf-8');return
-    # Need a bounded universe to respect official-service load; top 60 by latest traded value.
-    liquid=sorted(latest,key=lambda z:z['value'],reverse=True)[:60]
-    revenue=revenue_lookup();valuation=valuation_lookup();institutional,inst_sessions=institutional_5day();eps_data=eps_snapshot()
-    scored=[];errors=[]
-    for i,s in enumerate(liquid):
-        print(f'{i+1}/{len(liquid)} {s["ticker"]}',flush=True)
-        h=load_history(s['ticker'])
-        # guard against stale historical candles: latest quote can be more recent than cache
-        if h and s['date'] and h[-1]['date']<s['date']:
-            errors.append(f'{s["ticker"]}:歷史價格尚未涵蓋最新交易日')
-            continue
-        record=calc(s,h,revenue.get(s['ticker']),valuation.get(s['ticker']),institutional.get(s['ticker']),eps_data.get(s['ticker']))
-        if record:scored.append(record)
-    scored.sort(key=lambda x:(x['observedScore'],x['ret20']),reverse=True)
-    payload={'updatedAt':NOW.isoformat(),'quoteDate':latest[0]['date'],'universe':'TWSE 成交金額前60名；非全市場','totalConsidered':len(liquid),'eligible':len(scored),'mode':'PARTIAL_DATA','institutionalSessions':inst_sessions,'method':'可得欄位的比例分數（不等於100分完整模型）','warning':'研究用途；本版有最新已揭露累計EPS（如可取得），仍缺完整近四季EPS；部分個股法人資料可能不足，故不顯示完整100分，也不將其當成正式買入訊號。','errors':errors[:12],'items':scored,'sources':[{'name':'上市當日行情','url':'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'},{'name':'歷史日行情','url':'https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY'},{'name':'月營收','url':'https://openapi.twse.com.tw/v1/opendata/t187ap05_L'},{'name':'本益比','url':'https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL'},{'name':'法人近五日','url':'https://www.twse.com.tw/rwd/zh/fund/T86'}]}
-    (DATA/'latest.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
-    (ROOT/'site'/'data.json').write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
-    print('DONE',len(scored),'eligible,',len(errors),'stale')
-if __name__=='__main__':main()
+    quotes = latest_quotes()
+    if not quotes:
+        print('Latest market feed missing. Keeping prior website snapshot.', flush=True)
+        return
+    # Quote snapshot can have dates spanning multiple days when certain stocks are suspended.
+    dated = [q for q in quotes if q['date']]
+    if not dated:
+        print('Missing market dates; do not publish unreliable data', flush=True)
+        return
+    anchor = max(q['date'] for q in dated)
+    universe = sorted([q for q in dated if q['date'] == anchor], key=lambda x: x['value'], reverse=True)[:60]
+    revenues, val, inst = revenue_data(), valuations(), None
+    inst, sessions = institutions()
+    results, errors = [], []
+    for i, quote in enumerate(universe):
+        print(f'{i + 1}/{len(universe)} {quote["ticker"]}', flush=True)
+        bars = history(quote['ticker'])
+        eps = eps_history(quote['ticker'], dt.date.fromisoformat(anchor)) if len(bars) >= 65 else None
+        record, error = score_stock(quote, bars, revenues.get(quote['ticker']), val.get(quote['ticker']), inst.get(quote['ticker']), eps)
+        if record:
+            results.append(record)
+        elif error:
+            errors.append(f'{quote["ticker"]}: {error}')
+    results.sort(key=lambda r: (r['observedScore'] or -1, r['ret20']), reverse=True)
+    payload = {'updatedAt': NOW.isoformat(), 'quoteDate': anchor, 'universe': 'TWSE當日成交金額前60名',
+               'totalConsidered': len(universe), 'eligible': len(results), 'institutionalSessions': sessions,
+               'mode': 'COMPLETE' if results and all(r['score'] is not None for r in results) else 'PARTIAL_DATA',
+               'method': '已驗證欄位相對分數；只有EPS股本調整驗證通過才會顯示100分完整評級',
+               'warning': 'FinMind EPS為原始單季值。配股/分割可能使四季加總不一致；尚無企業行動校驗時僅能列研究候選，不標示正式完整評分。',
+               'errors': errors[:20], 'items': results,
+               'sources': [{'name': 'TWSE行情', 'url': 'https://openapi.twse.com.tw/'},
+                           {'name': 'FinMind季EPS', 'url': 'https://finmind.github.io/tutor/TaiwanMarket/Fundamental/'}]}
+    save(DATA / 'latest.json', payload)
+    save(SITE / 'data.json', payload)
+    print('Published', len(results), 'candidates; anchor', anchor, 'errors', len(errors), flush=True)
+
+
+if __name__ == '__main__':
+    main()
