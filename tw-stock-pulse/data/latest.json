@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-22T22:50:36.376458+08:00",
+  "updatedAt": "2026-10-23T00:58:00.146329+08:00",
   "quoteDate": "2026-10-21",
   "universe": "TWSE 成交金額前60名；非全市場",
   "totalConsidered": 60,
@@ -7,7 +7,7 @@
   "mode": "PARTIAL_DATA",
   "institutionalSessions": 5,
   "method": "可得欄位的比例分數（不等於100分完整模型）",
-  "warning": "研究用途；本版尚缺完整近四季EPS；部分個股法人資料可能不足，故不顯示完整100分，也不將其當成正式買入訊號。",
+  "warning": "研究用途；本版有最新已揭露累計EPS（如可取得），仍缺完整近四季EPS；部分個股法人資料可能不足，故不顯示完整100分，也不將其當成正式買入訊號。",
   "errors": [],
   "items": [
     {
@@ -40,6 +40,9 @@
       "trust5Shares": 4126973.0,
       "institutionalThrough": "2026-10-22",
       "pe": 10.21,
+      "epsCumulative": 11.24,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -91,6 +94,9 @@
       "trust5Shares": 317457.0,
       "institutionalThrough": "2026-10-22",
       "pe": 20.59,
+      "epsCumulative": 16.59,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -142,6 +148,9 @@
       "trust5Shares": 0.0,
       "institutionalThrough": "2026-10-22",
       "pe": null,
+      "epsCumulative": -3.76,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接",
         "估值資料缺失"
@@ -194,6 +203,9 @@
       "trust5Shares": 3468363.0,
       "institutionalThrough": "2026-10-22",
       "pe": 78.14,
+      "epsCumulative": 0.64,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -245,6 +257,9 @@
       "trust5Shares": -4620333.0,
       "institutionalThrough": "2026-10-22",
       "pe": 17.71,
+      "epsCumulative": 2.26,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -296,6 +311,9 @@
       "trust5Shares": 4647994.0,
       "institutionalThrough": "2026-10-22",
       "pe": 32.07,
+      "epsCumulative": 4.93,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -347,6 +365,9 @@
       "trust5Shares": -15176136.0,
       "institutionalThrough": "2026-10-22",
       "pe": 19.01,
+      "epsCumulative": 4.32,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -398,6 +419,9 @@
       "trust5Shares": 1217973.0,
       "institutionalThrough": "2026-10-22",
       "pe": 127.6,
+      "epsCumulative": 4.39,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -449,6 +473,9 @@
       "trust5Shares": -10900113.0,
       "institutionalThrough": "2026-10-22",
       "pe": 17.89,
+      "epsCumulative": 1.96,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -500,6 +527,9 @@
       "trust5Shares": 836973.0,
       "institutionalThrough": "2026-10-22",
       "pe": 30.84,
+      "epsCumulative": 13.99,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -551,6 +581,9 @@
       "trust5Shares": 1020783.0,
       "institutionalThrough": "2026-10-22",
       "pe": 51.69,
+      "epsCumulative": 5.17,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -602,6 +635,9 @@
       "trust5Shares": 3577220.0,
       "institutionalThrough": "2026-10-22",
       "pe": 68.4,
+      "epsCumulative": 3.55,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -653,6 +689,9 @@
       "trust5Shares": 0.0,
       "institutionalThrough": "2026-10-22",
       "pe": 47.62,
+      "epsCumulative": 1.53,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -704,6 +743,9 @@
       "trust5Shares": -247641.0,
       "institutionalThrough": "2026-10-22",
       "pe": 15.49,
+      "epsCumulative": 7.78,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
@@ -755,6 +797,9 @@
       "trust5Shares": -1422418.0,
       "institutionalThrough": "2026-10-22",
       "pe": 46.95,
+      "epsCumulative": 2.19,
+      "epsPeriod": "115/2",
+      "epsBasis": "最新已揭露累計EPS；非近四季TTM",
       "missing": [
         "近4季EPS未串接"
       ],
