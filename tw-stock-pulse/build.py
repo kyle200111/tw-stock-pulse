@@ -115,6 +115,25 @@ def institutional_5day():
     out={code:{'foreign5':sum(rows[code]['foreign'] for _,rows in session),'trust5':sum(rows[code]['trust'] for _,rows in session),'through':session[0][0]} for code in codes}
     return out,5
 
+def eps_snapshot():
+    """Published latest cumulative EPS, not trailing 4-quarter EPS. Avoid look-ahead."""
+    endpoints=['t187ap06_L_ci','t187ap06_L_fh','t187ap06_L_ins','t187ap06_L_basi','t187ap06_L_bd','t187ap06_L_mim']
+    out={}
+    for ep in endpoints:
+        raw=fetch('https://openapi.twse.com.tw/v1/opendata/'+ep,2)
+        if not isinstance(raw,list):continue
+        for r in raw:
+            code=str(r.get('公司代號') or r.get('公司代碼') or '').strip()
+            if len(code)!=4 or not code.isdigit():continue
+            eps=None
+            for k,v in r.items():
+                if '每股盈餘' in k or '每股稅後盈餘' in k:
+                    n=number(v)
+                    if n is not None:eps=n
+            if eps is None:continue
+            out[code]={'value':eps,'period':str(r.get('年度') or r.get('資料年度') or '')+'/'+str(r.get('季別') or r.get('資料季別') or ''),'source':ep,'basis':'最新已揭露累計EPS；非近四季TTM'}
+    return out
+
 def load_history(ticker, months=6):
     cache_file=DATA/'history'/f'{ticker}.json';cache_file.parent.mkdir(exist_ok=True)
     old=read_json(cache_file,{})
@@ -141,7 +160,7 @@ def load_history(ticker, months=6):
 
 def mean(seq):return sum(seq)/len(seq) if seq else None
 
-def calc(s, hist, rev, val, inst=None):
+def calc(s, hist, rev, val, inst=None, eps=None):
     if len(hist)<65:return None
     closes=[r['close'] for r in hist]; highs=[r['high'] for r in hist]; lows=[r['low'] for r in hist]; vals=[r['value'] for r in hist]; vols=[r['volume'] for r in hist]
     price=closes[-1];ma20=mean(closes[-20:]);ma60=mean(closes[-60:]); avgv=mean(vals[-20:]); avgvol=mean(vols[-20:])
@@ -175,7 +194,7 @@ def calc(s, hist, rev, val, inst=None):
     stop=round(max(0.01,price-2*atr),2)
     target=round(price+3*atr,2)
     weeks='2–4週' if r20>=.15 else '4–8週' if r20>=.05 else '6–12週'
-    return {'ticker':s['ticker'],'name':s['name'],'market':'TWSE','date':hist[-1]['date'], 'price':round(price,2),'score':None,'observedScore':score,'scoreCoverage':cap,'scoreMaximum':100,'status':'研究候選｜分數不完整', 'holding':weeks,'target':target,'stop':stop,'entryType':entry,'upside':round((target/price-1)*100,1),'downside':round((stop/price-1)*100,1),'ma20':round(ma20,2),'ma60':round(ma60,2),'atr14':round(atr,2),'ret20':round(r20*100,1),'ret60':round(r60*100,1),'volumeRatio':round(vol_ratio,2),'avgValue20':round(avgv),'revenueYoy':yoy,'revenuePeriod':rev.get('period') if rev else None,'foreign5Shares':inst.get('foreign5') if inst else None,'trust5Shares':inst.get('trust5') if inst else None,'institutionalThrough':inst.get('through') if inst else None,'pe':pe,'missing':['近4季EPS未串接']+([] if institution is not None else ['法人最近五交易日資料缺失'])+(['估值資料缺失'] if valuation is None else [])+(['月營收年增缺失'] if yoy is None else []),'scoreParts':{'fundamental':fundamental,'momentum':momentum,'volume':volume,'institutional':institution,'valuation':valuation,'risk':risk},'rationale':['價位高於MA20、MA60且MA20>MA60',f'近20日報酬 {r20*100:.1f}%',f'ATR(14) {atr:.2f}'],'sourceUrls':['https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY','https://openapi.twse.com.tw/v1/opendata/t187ap05_L']}
+    return {'ticker':s['ticker'],'name':s['name'],'market':'TWSE','date':hist[-1]['date'], 'price':round(price,2),'score':None,'observedScore':score,'scoreCoverage':cap,'scoreMaximum':100,'status':'研究候選｜分數不完整', 'holding':weeks,'target':target,'stop':stop,'entryType':entry,'upside':round((target/price-1)*100,1),'downside':round((stop/price-1)*100,1),'ma20':round(ma20,2),'ma60':round(ma60,2),'atr14':round(atr,2),'ret20':round(r20*100,1),'ret60':round(r60*100,1),'volumeRatio':round(vol_ratio,2),'avgValue20':round(avgv),'revenueYoy':yoy,'revenuePeriod':rev.get('period') if rev else None,'foreign5Shares':inst.get('foreign5') if inst else None,'trust5Shares':inst.get('trust5') if inst else None,'institutionalThrough':inst.get('through') if inst else None,'pe':pe,'epsCumulative':eps.get('value') if eps else None,'epsPeriod':eps.get('period') if eps else None,'epsBasis':eps.get('basis') if eps else None,'missing':['近4季EPS未串接']+([] if institution is not None else ['法人最近五交易日資料缺失'])+(['估值資料缺失'] if valuation is None else [])+(['月營收年增缺失'] if yoy is None else []),'scoreParts':{'fundamental':fundamental,'momentum':momentum,'volume':volume,'institutional':institution,'valuation':valuation,'risk':risk},'rationale':['價位高於MA20、MA60且MA20>MA60',f'近20日報酬 {r20*100:.1f}%',f'ATR(14) {atr:.2f}'],'sourceUrls':['https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY','https://openapi.twse.com.tw/v1/opendata/t187ap05_L']}
 
 def main():
     latest=load_latest()
@@ -186,7 +205,7 @@ def main():
         (DATA/'latest.json').write_text(json.dumps(previous,ensure_ascii=False,indent=2),encoding='utf-8');return
     # Need a bounded universe to respect official-service load; top 60 by latest traded value.
     liquid=sorted(latest,key=lambda z:z['value'],reverse=True)[:60]
-    revenue=revenue_lookup();valuation=valuation_lookup();institutional,inst_sessions=institutional_5day()
+    revenue=revenue_lookup();valuation=valuation_lookup();institutional,inst_sessions=institutional_5day();eps_data=eps_snapshot()
     scored=[];errors=[]
     for i,s in enumerate(liquid):
         print(f'{i+1}/{len(liquid)} {s["ticker"]}',flush=True)
@@ -195,10 +214,10 @@ def main():
         if h and s['date'] and h[-1]['date']<s['date']:
             errors.append(f'{s["ticker"]}:歷史價格尚未涵蓋最新交易日')
             continue
-        record=calc(s,h,revenue.get(s['ticker']),valuation.get(s['ticker']),institutional.get(s['ticker']))
+        record=calc(s,h,revenue.get(s['ticker']),valuation.get(s['ticker']),institutional.get(s['ticker']),eps_data.get(s['ticker']))
         if record:scored.append(record)
     scored.sort(key=lambda x:(x['observedScore'],x['ret20']),reverse=True)
-    payload={'updatedAt':NOW.isoformat(),'quoteDate':latest[0]['date'],'universe':'TWSE 成交金額前60名；非全市場','totalConsidered':len(liquid),'eligible':len(scored),'mode':'PARTIAL_DATA','institutionalSessions':inst_sessions,'method':'可得欄位的比例分數（不等於100分完整模型）','warning':'研究用途；本版尚缺完整近四季EPS；部分個股法人資料可能不足，故不顯示完整100分，也不將其當成正式買入訊號。','errors':errors[:12],'items':scored,'sources':[{'name':'上市當日行情','url':'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'},{'name':'歷史日行情','url':'https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY'},{'name':'月營收','url':'https://openapi.twse.com.tw/v1/opendata/t187ap05_L'},{'name':'本益比','url':'https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL'},{'name':'法人近五日','url':'https://www.twse.com.tw/rwd/zh/fund/T86'}]}
+    payload={'updatedAt':NOW.isoformat(),'quoteDate':latest[0]['date'],'universe':'TWSE 成交金額前60名；非全市場','totalConsidered':len(liquid),'eligible':len(scored),'mode':'PARTIAL_DATA','institutionalSessions':inst_sessions,'method':'可得欄位的比例分數（不等於100分完整模型）','warning':'研究用途；本版有最新已揭露累計EPS（如可取得），仍缺完整近四季EPS；部分個股法人資料可能不足，故不顯示完整100分，也不將其當成正式買入訊號。','errors':errors[:12],'items':scored,'sources':[{'name':'上市當日行情','url':'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'},{'name':'歷史日行情','url':'https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY'},{'name':'月營收','url':'https://openapi.twse.com.tw/v1/opendata/t187ap05_L'},{'name':'本益比','url':'https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL'},{'name':'法人近五日','url':'https://www.twse.com.tw/rwd/zh/fund/T86'}]}
     (DATA/'latest.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
     (ROOT/'site'/'data.json').write_text(json.dumps(payload,ensure_ascii=False),encoding='utf-8')
     print('DONE',len(scored),'eligible,',len(errors),'stale')
