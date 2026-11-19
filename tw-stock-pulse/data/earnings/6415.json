@@ -1,5 +1,5 @@
 {
-  "fetchedDate": "2026-11-11",
+  "fetchedDate": "2026-11-19",
   "rows": [
     {
       "date": "2024-12-31",
@@ -48,6 +48,13 @@
       "stock_id": "6415",
       "type": "EPS",
       "value": 4.05,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2026-09-30",
+      "stock_id": "6415",
+      "type": "EPS",
+      "value": 2.34,
       "origin_name": "基本每股盈餘"
     }
   ]
