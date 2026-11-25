@@ -1,0 +1,61 @@
+{
+  "fetchedDate": "2026-11-25",
+  "rows": [
+    {
+      "date": "2024-12-31",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": 19.4,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2025-03-31",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": 4.46,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2025-06-30",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": -1.6,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2025-09-30",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": 4.62,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2025-12-31",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": 3.88,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2026-03-31",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": 2.63,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2026-06-30",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": 2.51,
+      "origin_name": "基本每股盈餘"
+    },
+    {
+      "date": "2026-09-30",
+      "stock_id": "2474",
+      "type": "EPS",
+      "value": 2.45,
+      "origin_name": "基本每股盈餘"
+    }
+  ]
+}
